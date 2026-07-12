@@ -11,11 +11,18 @@ runs/
 *.pth
 *.pt
 
-# Images
+# Images (ignore by default)
 *.png
 *.jpg
 
-# But keep images in results/
+# Keep experiment results
 !results/
 !results/*.png
 !results/*.jpg
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+.DS_Store
