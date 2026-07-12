@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+
+# Dataset
+data/
+dataset_alicona/
+runs/
+
+# Models
+*.pth
+*.pt
+
+# Images
+*.png
+*.jpg
