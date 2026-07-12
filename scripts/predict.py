@@ -120,5 +120,16 @@ plt.imshow(y_pred.numpy(), cmap="jet")
 plt.title("Predicted height")
 plt.axis("off")
 
+from pathlib import Path
+
+results_dir = Path("results")
+results_dir.mkdir(parents=True, exist_ok=True)
+
+save_path = results_dir / "prediction_unet_patch128_ep100.png"
+
 plt.tight_layout()
+plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+print(f"Prediction saved to: {save_path.resolve()}")
+
 plt.show()

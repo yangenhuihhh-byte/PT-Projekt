@@ -14,3 +14,8 @@ runs/
 # Images
 *.png
 *.jpg
+
+# But keep images in results/
+!results/
+!results/*.png
+!results/*.jpg
