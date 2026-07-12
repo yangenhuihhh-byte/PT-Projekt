@@ -1,68 +1,46 @@
-# PT Projekt – Surface Height Prediction using U-Net
+# PT-Projekt
 
-## Overview
+## Surface Height Prediction from Alicona Microscope Images using U-Net
 
-This project investigates the prediction of surface height maps from microscope texture images using deep learning.
+### Project Overview
 
-The goal is to train a convolutional neural network capable of reconstructing the corresponding height map from a single texture image. During the project, several network architectures and dataset generation strategies were explored, and the final implementation is based on a U-Net model.
+The goal of this project is to reconstruct surface height maps from Alicona microscope texture images using deep learning.
 
----
+The workflow includes:
 
-## Objectives
-
-- Generate paired texture–height datasets from Alicona microscope measurements.
-- Train a deep learning model for surface height prediction.
-- Improve prediction accuracy through optimized patch generation and preprocessing.
-- Evaluate the prediction quality by comparing predicted height maps with ground truth.
-
----
-
-## Dataset
-
-Microscope data were acquired using Alicona measurements.
-
-Dataset preparation includes:
-
-- Patch extraction
-- Overlapping patches
-- Normalization
-- Training / prediction split
-
-Final dataset:
-
-- Patch size: **128 × 128**
-- Stride: **192**
-- Approximately **17,400 training patches**
+- Dataset preparation
+- Height map reconstruction
+- Patch generation
+- U-Net training
+- Surface height prediction
+- Result visualization
+- Git version control
 
 ---
 
-## Model
+# Workflow
 
-Final model:
+Texture Image
 
-- U-Net
-- PyTorch
-- CUDA acceleration
+↓
 
-Training settings:
+Patch Generation
 
-| Parameter | Value |
-|-----------|-------|
-| Epochs | 100 |
-| Optimizer | Adam |
-| Loss | L1 Loss |
-| Patch size | 128×128 |
-| Stride | 192 |
+↓
 
-Final training loss:
+Training Dataset
 
-```
-Loss ≈ 0.365
-```
+↓
+
+U-Net
+
+↓
+
+Height Prediction
 
 ---
 
-## Project Structure
+# Repository Structure
 
 ```
 PT-Projekt
@@ -72,67 +50,94 @@ PT-Projekt
 │   ├── train.py
 │   └── predict.py
 │
-├── data
+├── results
+│   ├── experiment_01_simplecnn.png
+│   ├── experiment_02_smallunet.png
+│   ├── experiment_03_unet_8526patches.png
+│   ├── experiment_04_overlap_normalization_30epoch.png
+│   └── experiment_05_final_100epoch.png
 │
-├── dataset_alicona
+├── docs
+│   └── development_log.md
 │
-├── runs
-│
-├── .gitignore
-│
-└── README.md
+├── README.md
+└── .gitignore
 ```
 
 ---
 
-## Workflow
+# Experimental Results
 
-1. Generate training patches from Alicona measurements.
-2. Normalize texture and height data.
-3. Train the U-Net model.
-4. Save the trained model.
-5. Predict height maps from unseen texture images.
-6. Compare prediction with ground truth.
+## Experiment 1 – SimpleCNN
+
+The initial CNN model mainly learned the average height and could not reconstruct the surface structure.
+
+![](results/experiment_01_simplecnn.png)
 
 ---
 
-## Current Progress
+## Experiment 2 – Small U-Net
 
-Completed:
+The Small U-Net started learning the global height distribution but remained blurry.
 
-- Dataset generation
-- Overlapping patch extraction
-- Data normalization
-- U-Net implementation
-- Model training
-- Prediction visualization
+![](results/experiment_02_smallunet.png)
 
-Current best model:
+---
+
+## Experiment 3 – U-Net (8526 patches)
+
+The prediction quality improved noticeably, although obvious block artifacts were still present.
+
+![](results/experiment_03_unet_8526patches.png)
+
+---
+
+## Experiment 4 – Overlap + Normalization (30 epochs)
+
+Introducing overlapping patches and height normalization significantly improved training stability.
+
+![](results/experiment_04_overlap_normalization_30epoch.png)
+
+---
+
+## Experiment 5 – Final Model (100 epochs)
+
+Current best prediction.
+
+The reconstructed height map is much closer to the ground truth.
+
+![](results/experiment_05_final_100epoch.png)
+
+---
+
+# Current Best Model
+
+| Parameter | Value |
+|-----------|-------|
+| Network | U-Net |
+| Patch Size | 128 × 128 |
+| Stride | 192 |
+| Epochs | 100 |
+| Loss Function | L1 Loss |
+| Final Loss | ≈ 0.365 |
+
+---
+
+# Future Work
+
+- Improve local surface details
+- Explore deeper U-Net architectures
+- Add validation dataset
+- Perform quantitative evaluation
+- Generate complete 3D surface visualization
+- Improve boundary reconstruction
+
+---
+
+# Development History
+
+The complete development process, encountered problems, and optimization steps are documented in:
 
 ```
-Patch size : 128 × 128
-Stride     : 192
-Epochs     : 100
-Loss        : ~0.365
+docs/development_log.md
 ```
-
-The predicted height maps show a significantly improved agreement with the measured ground truth compared with the initial experiments.
-
----
-
-## Requirements
-
-- Python 3.x
-- PyTorch
-- NumPy
-- Matplotlib
-
----
-
-## Author
-
-**Enhui Yang**
-
-Technische Universität Berlin
-
-PT Projekt
