@@ -1,0 +1,2 @@
+timestamp,experiment,model,num_samples,mean_mae,mean_mse,mean_rmse
+2026-07-13 00:58:21,experiment_05_final_100epoch,unet_patch128_ep100,17400,0.579896935539684,0.576083493671198,0.7590016427328719
