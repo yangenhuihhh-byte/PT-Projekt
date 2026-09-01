@@ -218,7 +218,7 @@ Run the resolution comparison:
 
 ## Notes
 
-- Model checkpoint files (`*.pth`) are intentionally not committed. See `models/README.md`.
+- Five selected `*_best.pth` checkpoints are included so the reported models can be evaluated directly. Duplicate `*_last.pth` checkpoints are intentionally excluded; see `models/README.md`.
 - Raw Alicona data is intentionally not committed.
 - Full per-sample `.npy` outputs are not committed; only summary metrics and selected figures are tracked.
 - The current-stage Chinese report is available in `docs/current_stage_report_2026-08-31_cn.md` and `docs/current_stage_report_2026-08-31_cn.docx`.

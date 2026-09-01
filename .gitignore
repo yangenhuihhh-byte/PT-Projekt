@@ -13,6 +13,7 @@ dataset_indices/**/patch_index.csv
 
 # Models
 *.pth
+!models/*_best.pth
 *.pt
 
 # Images (ignore by default)
