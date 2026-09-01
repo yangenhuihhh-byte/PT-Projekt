@@ -402,3 +402,51 @@ Loss
 The current model successfully reconstructs the global surface structure and shows a significant improvement compared with the initial experiments.
 
 Further work will focus on improving local details and reducing remaining prediction errors.
+
+---
+
+# Stage 16 - Post-Midterm Experiment Update
+
+Date: 2026-08-31
+
+## Objective
+
+Extend the project from a single-model demonstration to a complete experiment workflow with clear dataset splits, quantitative model comparison and complete microscope-image prediction.
+
+## Completed Updates
+
+- Reworked Alicona `.al3d` height loading using header metadata such as `DepthImageOffset`.
+- Added filtering for invalid height sentinel values before normalization.
+- Split data by complete microscope image:
+  - Train: 120 complete images, V1-V20
+  - Validation: 24 complete images, V21-V24
+  - Test: 30 complete images, V25-V29
+- Added patch indices for 64, 128 and 256 patch sizes.
+- Added model comparison across SimpleCNN, Small U-Net and TransUNet-lite.
+- Added `evaluate.py` for patch-level MAE, MSE and RMSE evaluation.
+- Added `predict_full_image.py` for complete-image sliding-window prediction.
+- Added overlap and Gaussian blending for reducing patch-boundary artifacts.
+- Added current-stage report files and report-ready figures.
+
+## Current Best Result
+
+The current best complete-image setting is:
+
+```text
+Model: Small U-Net
+Patch size: 128
+Prediction stride: 64
+Blend: Gaussian overlap
+```
+
+Average result on 30 complete test microscope images:
+
+```text
+Mean MAE_norm  = 0.0846515231
+Mean MSE_norm  = 0.0127101013
+Mean RMSE_norm = 0.1117579066
+```
+
+## Current Status
+
+The project is now in the experiment consolidation stage. The main workflow is complete, and the next work should focus on improving local fine-detail prediction, confirming physical height-unit interpretation and preparing the final project presentation/report.
