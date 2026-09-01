@@ -5,7 +5,11 @@ __pycache__/
 # Dataset
 data/
 dataset_alicona/
+dataset_alicona_patch64/
+dataset_alicona_patch256/
+Versuchsreihe2_B91$prj/
 runs/
+dataset_indices/**/patch_index.csv
 
 # Models
 *.pth
@@ -19,6 +23,12 @@ runs/
 !results/
 !results/*.png
 !results/*.jpg
+!results/report_figures/
+!results/report_figures/*.png
+!results/report_figures/*.jpg
+
+# Large dense prediction arrays
+*.npy
 
 # VS Code
 .vscode/
@@ -26,3 +36,4 @@ runs/
 # Windows
 Thumbs.db
 .DS_Store
+~$*.docx
