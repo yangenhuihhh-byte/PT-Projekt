@@ -1,167 +1,199 @@
+from __future__ import annotations
+
+import argparse
+import csv
+from datetime import datetime
 from pathlib import Path
+
 import torch
-from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader
 
-
-# =========================
-# Dataset
-# =========================
-class AliconaDataset(Dataset):
-
-    def __init__(self, root_dir):
-
-        self.image_dir = Path(root_dir) / "images"
-        self.height_dir = Path(root_dir) / "heights"
-
-        self.image_files = sorted(list(self.image_dir.glob("*.pt")))
-        self.height_files = sorted(list(self.height_dir.glob("*.pt")))
-
-    def __len__(self):
-        return len(self.image_files)
-
-    def __getitem__(self, idx):
-
-        x = torch.load(self.image_files[idx]).float()
-        y = torch.load(self.height_files[idx]).float()
-
-        y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-
-        y = y - y.mean()
-        y = y / (y.std() + 1e-8)
-
-        y = y.unsqueeze(0)
-
-        return x, y
-
-
-# =========================
-# Small UNet
-# =========================
-class SmallUNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        self.enc1 = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, padding=1),
-            nn.ReLU()
-        )
-
-        self.pool1 = nn.MaxPool2d(2)
-
-        self.enc2 = nn.Sequential(
-            nn.Conv2d(32, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.ReLU()
-        )
-
-        self.pool2 = nn.MaxPool2d(2)
-
-        self.middle = nn.Sequential(
-            nn.Conv2d(64, 128, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 128, 3, padding=1),
-            nn.ReLU()
-        )
-
-        self.up2 = nn.ConvTranspose2d(128, 64, 2, stride=2)
-
-        self.dec2 = nn.Sequential(
-            nn.Conv2d(128, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.ReLU()
-        )
-
-        self.up1 = nn.ConvTranspose2d(64, 32, 2, stride=2)
-
-        self.dec1 = nn.Sequential(
-            nn.Conv2d(64, 32, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, padding=1),
-            nn.ReLU()
-        )
-
-        self.out = nn.Conv2d(32, 1, 1)
-
-    def forward(self, x):
-        e1 = self.enc1(x)
-        p1 = self.pool1(e1)
-
-        e2 = self.enc2(p1)
-        p2 = self.pool2(e2)
-
-        m = self.middle(p2)
-
-        u2 = self.up2(m)
-        d2 = self.dec2(torch.cat([u2, e2], dim=1))
-
-        u1 = self.up1(d2)
-        d1 = self.dec1(torch.cat([u1, e1], dim=1))
-
-        return self.out(d1)
-# =========================
-# Main
-# =========================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-print("使用设备:", device)
-
-dataset = AliconaDataset("E:/PT Projekt/dataset_alicona")
-
-print("数据集大小:", len(dataset))
-
-loader = DataLoader(
-    dataset,
-    batch_size=8,
-    shuffle=True
+from data_utils import (
+    DEFAULT_PATCH_INDEX_CSV,
+    DEFAULT_SPLIT_CSV,
+    PROJECT_DIR,
+    AliconaPatchDataset,
+    ensure_prepared,
 )
+from models import create_model
 
-model = SmallUNet().to(device)
 
-criterion = nn.L1Loss()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train height-map prediction models.")
+    parser.add_argument("--model", default="small_unet", choices=["simple_cnn", "small_unet", "transunet_lite"])
+    parser.add_argument("--patch-size", type=int, default=128)
+    parser.add_argument("--stride", type=int, default=128)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--shuffle-patches", action="store_true")
+    parser.add_argument("--limit-train-patches", type=int, default=None)
+    parser.add_argument("--limit-val-patches", type=int, default=None)
+    parser.add_argument("--split-csv", type=Path, default=DEFAULT_SPLIT_CSV)
+    parser.add_argument("--patch-index-csv", type=Path, default=DEFAULT_PATCH_INDEX_CSV)
+    parser.add_argument("--models-dir", type=Path, default=PROJECT_DIR / "models")
+    parser.add_argument("--results-dir", type=Path, default=PROJECT_DIR / "results")
+    return parser.parse_args()
 
-optimizer = optim.Adam(
-    model.parameters(),
-    lr=1e-4
-)
 
-epochs = 100
+def mean_absolute_metrics(prediction: torch.Tensor, target: torch.Tensor) -> tuple[float, float, float]:
+    difference = prediction - target
+    mae = torch.mean(torch.abs(difference)).item()
+    mse = torch.mean(difference * difference).item()
+    rmse = mse**0.5
+    return mae, mse, rmse
 
-for epoch in range(epochs):
 
-    model.train()
+def evaluate(
+    model: nn.Module,
+    data_loader: DataLoader,
+    device: torch.device,
+    criterion: nn.Module,
+) -> tuple[float, float, float, float]:
+    model.eval()
+    total_loss = 0.0
+    total_abs = 0.0
+    total_squared = 0.0
+    total_elements = 0
 
-    total_loss = 0
+    with torch.no_grad():
+        for images, heights in data_loader:
+            images = images.to(device)
+            heights = heights.to(device)
+            predictions = model(images)
+            loss = criterion(predictions, heights)
 
-    for x, y in loader:
+            difference = predictions - heights
+            total_loss += loss.item()
+            total_abs += torch.abs(difference).sum().item()
+            total_squared += (difference * difference).sum().item()
+            total_elements += difference.numel()
 
-        x = x.to(device).float()
-        y = y.to(device).float()
+    mae = total_abs / total_elements
+    mse = total_squared / total_elements
+    rmse = mse**0.5
+    mean_loss = total_loss / max(len(data_loader), 1)
+    return mean_loss, mae, mse, rmse
 
-        x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-        y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
-        pred = model(x)
+def append_training_log(path: Path, row: list[object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    exists = path.exists()
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        if not exists:
+            writer.writerow(
+                [
+                    "timestamp",
+                    "model",
+                    "epoch",
+                    "train_loss",
+                    "val_loss",
+                    "val_mae_norm",
+                    "val_mse_norm",
+                    "val_rmse_norm",
+                ]
+            )
+        writer.writerow(row)
 
-        loss = criterion(pred, y)
 
-        optimizer.zero_grad()
+def main() -> None:
+    args = parse_args()
+    ensure_prepared(
+        split_csv=args.split_csv,
+        patch_index_csv=args.patch_index_csv,
+        patch_size=args.patch_size,
+        stride=args.stride,
+    )
 
-        loss.backward()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
 
-        optimizer.step()
+    train_dataset = AliconaPatchDataset(
+        split="train",
+        split_csv=args.split_csv,
+        patch_index_csv=args.patch_index_csv,
+        limit=args.limit_train_patches,
+    )
+    val_dataset = AliconaPatchDataset(
+        split="val",
+        split_csv=args.split_csv,
+        patch_index_csv=args.patch_index_csv,
+        limit=args.limit_val_patches,
+    )
+    print(f"Train patches: {len(train_dataset)}")
+    print(f"Validation patches: {len(val_dataset)}")
 
-        total_loss += loss.item()
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=args.shuffle_patches,
+        num_workers=0,
+    )
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    avg_loss = total_loss / len(loader)
+    model = create_model(args.model).to(device)
+    criterion = nn.L1Loss()
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    print(f"Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.10f}")
+    args.models_dir.mkdir(parents=True, exist_ok=True)
+    model_stem = f"{args.model}_patch{args.patch_size}_stride{args.stride}_ep{args.epochs}"
+    best_path = args.models_dir / f"{model_stem}_best.pth"
+    last_path = args.models_dir / f"{model_stem}_last.pth"
+    best_val = float("inf")
 
-torch.save(model.state_dict(), "unet_patch128_ep100.pth")
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        running_loss = 0.0
 
-print("模型已保存")
+        for images, heights in train_loader:
+            images = images.to(device)
+            heights = heights.to(device)
+
+            predictions = model(images)
+            loss = criterion(predictions, heights)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+
+        train_loss = running_loss / max(len(train_loader), 1)
+        val_loss, val_mae, val_mse, val_rmse = evaluate(model, val_loader, device, criterion)
+
+        print(
+            f"Epoch {epoch:03d}/{args.epochs} | "
+            f"train_loss={train_loss:.6f} | "
+            f"val_mae_norm={val_mae:.6f} | "
+            f"val_rmse_norm={val_rmse:.6f}"
+        )
+
+        append_training_log(
+            args.results_dir / "training_log.csv",
+            [
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                args.model,
+                epoch,
+                train_loss,
+                val_loss,
+                val_mae,
+                val_mse,
+                val_rmse,
+            ],
+        )
+
+        if val_mae < best_val:
+            best_val = val_mae
+            torch.save(model.state_dict(), best_path)
+
+    torch.save(model.state_dict(), last_path)
+    print(f"Best checkpoint: {best_path}")
+    print(f"Last checkpoint: {last_path}")
+    print("All MAE/MSE/RMSE values are computed on min-max normalized height maps.")
+
+
+if __name__ == "__main__":
+    main()

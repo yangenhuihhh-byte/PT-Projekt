@@ -1,305 +1,98 @@
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
-from datetime import datetime
-import csv
-import math
 
-import matplotlib.pyplot as plt
+import numpy as np
 import torch
-import torch.nn as nn
+from PIL import Image, ImageDraw
 
-
-# ============================================================
-# Model definitions
-# ============================================================
-
-class SimpleCNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        self.net = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 1, kernel_size=3, padding=1),
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class SmallUNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        self.enc1 = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-
-        self.pool1 = nn.MaxPool2d(2)
-
-        self.enc2 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-
-        self.pool2 = nn.MaxPool2d(2)
-
-        self.middle = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-
-        self.up2 = nn.ConvTranspose2d(
-            128,
-            64,
-            kernel_size=2,
-            stride=2,
-        )
-
-        self.dec2 = nn.Sequential(
-            nn.Conv2d(128, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-
-        self.up1 = nn.ConvTranspose2d(
-            64,
-            32,
-            kernel_size=2,
-            stride=2,
-        )
-
-        self.dec1 = nn.Sequential(
-            nn.Conv2d(64, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-
-        self.out = nn.Conv2d(32, 1, kernel_size=1)
-
-    def forward(self, x):
-        e1 = self.enc1(x)
-        p1 = self.pool1(e1)
-
-        e2 = self.enc2(p1)
-        p2 = self.pool2(e2)
-
-        middle = self.middle(p2)
-
-        u2 = self.up2(middle)
-        d2 = self.dec2(torch.cat([u2, e2], dim=1))
-
-        u1 = self.up1(d2)
-        d1 = self.dec1(torch.cat([u1, e1], dim=1))
-
-        return self.out(d1)
-
-
-# ============================================================
-# Configuration
-# ============================================================
-
-PROJECT_DIR = Path("E:/PT Projekt")
-
-MODEL_NAME = "unet_patch128_ep100"
-MODEL_PATH = PROJECT_DIR / f"{MODEL_NAME}.pth"
-
-IMAGE_PATH = (
-    PROJECT_DIR
-    / "dataset_alicona"
-    / "images"
-    / "img_00000.pt"
+from data_utils import (
+    DEFAULT_PATCH_INDEX_CSV,
+    DEFAULT_SPLIT_CSV,
+    PROJECT_DIR,
+    AliconaPatchDataset,
+    ensure_prepared,
 )
-
-HEIGHT_PATH = (
-    PROJECT_DIR
-    / "dataset_alicona"
-    / "heights"
-    / "height_00000.pt"
-)
-
-RESULTS_DIR = PROJECT_DIR / "results"
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-PREDICTION_PATH = (
-    RESULTS_DIR
-    / f"prediction_{MODEL_NAME}.png"
-)
-
-METRICS_PATH = RESULTS_DIR / "metrics.csv"
-
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
-)
-
-print(f"Device: {device}")
+from models import create_model
+from predict_full_image import colorize, make_summary, save_rgb_preview
 
 
-# ============================================================
-# Check required files
-# ============================================================
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Predict and visualize one indexed patch.")
+    parser.add_argument("--model", default="small_unet", choices=["simple_cnn", "small_unet", "transunet_lite"])
+    parser.add_argument("--checkpoint", type=Path, default=PROJECT_DIR / "unet_patch128_ep100.pth")
+    parser.add_argument("--split", default="test", choices=["train", "val", "test"])
+    parser.add_argument("--index", type=int, default=0)
+    parser.add_argument("--patch-size", type=int, default=128)
+    parser.add_argument("--stride", type=int, default=128)
+    parser.add_argument("--split-csv", type=Path, default=DEFAULT_SPLIT_CSV)
+    parser.add_argument("--patch-index-csv", type=Path, default=DEFAULT_PATCH_INDEX_CSV)
+    parser.add_argument("--results-dir", type=Path, default=PROJECT_DIR / "results" / "single_patch_predictions")
+    return parser.parse_args()
 
-if not MODEL_PATH.exists():
-    raise FileNotFoundError(
-        f"Model file not found: {MODEL_PATH}"
+
+def main() -> None:
+    args = parse_args()
+    ensure_prepared(
+        split_csv=args.split_csv,
+        patch_index_csv=args.patch_index_csv,
+        patch_size=args.patch_size,
+        stride=args.stride,
     )
+    if not args.checkpoint.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {args.checkpoint}")
 
-if not IMAGE_PATH.exists():
-    raise FileNotFoundError(
-        f"Input image tensor not found: {IMAGE_PATH}"
+    dataset = AliconaPatchDataset(
+        split=args.split,
+        split_csv=args.split_csv,
+        patch_index_csv=args.patch_index_csv,
     )
+    if args.index < 0 or args.index >= len(dataset):
+        raise IndexError(f"Patch index must be in [0, {len(dataset) - 1}]")
 
-if not HEIGHT_PATH.exists():
-    raise FileNotFoundError(
-        f"Height tensor not found: {HEIGHT_PATH}"
-    )
+    image, height = dataset[args.index]
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = create_model(args.model).to(device)
+    state = torch.load(args.checkpoint, map_location=device)
+    model.load_state_dict(state)
+    model.eval()
 
+    with torch.no_grad():
+        prediction = model(image.unsqueeze(0).to(device)).squeeze().cpu()
 
-# ============================================================
-# Load model
-# ============================================================
+    target = height.squeeze()
+    difference = prediction - target
+    mae = torch.mean(torch.abs(difference)).item()
+    mse = torch.mean(difference * difference).item()
+    rmse = mse**0.5
 
-model = SmallUNet().to(device)
+    output_dir = args.results_dir / f"{args.split}_idx{args.index}_{args.model}"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-model_state = torch.load(
-    MODEL_PATH,
-    map_location=device,
-    weights_only=True,
-)
+    texture_np = image.permute(1, 2, 0).numpy()
+    texture_image = save_rgb_preview(texture_np, output_dir / "input_texture.png")
+    true_image = colorize(target.numpy(), 0.0, 1.0)
+    pred_image = colorize(prediction.numpy(), 0.0, 1.0)
+    error_image = colorize(np.abs(difference.numpy()), 0.0, max(1e-8, float(torch.quantile(torch.abs(difference), 0.99))))
 
-model.load_state_dict(model_state)
-model.eval()
+    true_image.save(output_dir / "true_height_norm.png")
+    pred_image.save(output_dir / "predicted_height_norm.png")
+    error_image.save(output_dir / "absolute_error_norm.png")
+    make_summary(texture_image, true_image, pred_image, error_image, output_dir / "summary.png", preview_size=256)
 
+    metrics = Image.new("RGB", (360, 80), "white")
+    draw = ImageDraw.Draw(metrics)
+    draw.text((8, 8), f"MAE_norm:  {mae:.6f}", fill=(0, 0, 0))
+    draw.text((8, 30), f"MSE_norm:  {mse:.6f}", fill=(0, 0, 0))
+    draw.text((8, 52), f"RMSE_norm: {rmse:.6f}", fill=(0, 0, 0))
+    metrics.save(output_dir / "metrics.png")
 
-# ============================================================
-# Load prediction sample
-# ============================================================
-
-x = torch.load(
-    IMAGE_PATH,
-    map_location="cpu",
-    weights_only=True,
-).float()
-
-y_true = torch.load(
-    HEIGHT_PATH,
-    map_location="cpu",
-    weights_only=True,
-).float()
-
-# Add batch dimension: [C, H, W] -> [1, C, H, W]
-x_batch = x.unsqueeze(0).to(device)
-
-
-# ============================================================
-# Prediction
-# ============================================================
-
-with torch.no_grad():
-    y_pred = model(x_batch)
-
-# Convert prediction to CPU and remove batch/channel dimensions
-y_pred = y_pred.squeeze().cpu()
-y_true = y_true.squeeze().cpu()
-
-if y_pred.shape != y_true.shape:
-    raise ValueError(
-        "Prediction and ground-truth shapes do not match: "
-        f"{y_pred.shape} vs {y_true.shape}"
-    )
+    print(f"MAE_norm:  {mae:.10f}")
+    print(f"MSE_norm:  {mse:.10f}")
+    print(f"RMSE_norm: {rmse:.10f}")
+    print(f"Saved single-patch output to: {output_dir}")
 
 
-# ============================================================
-# Evaluation metrics
-# ============================================================
-
-difference = y_pred - y_true
-
-mae = torch.mean(torch.abs(difference)).item()
-mse = torch.mean(difference ** 2).item()
-rmse = math.sqrt(mse)
-
-print(f"MAE:  {mae:.10f}")
-print(f"MSE:  {mse:.10f}")
-print(f"RMSE: {rmse:.10f}")
-
-
-# ============================================================
-# Save metrics to CSV
-# ============================================================
-
-metrics_file_exists = METRICS_PATH.exists()
-
-with METRICS_PATH.open(
-    mode="a",
-    newline="",
-    encoding="utf-8",
-) as csv_file:
-    writer = csv.writer(csv_file)
-
-    if not metrics_file_exists:
-        writer.writerow([
-            "timestamp",
-            "model",
-            "sample",
-            "mae",
-            "mse",
-            "rmse",
-        ])
-
-    writer.writerow([
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        MODEL_NAME,
-        IMAGE_PATH.stem,
-        mae,
-        mse,
-        rmse,
-    ])
-
-print(f"Metrics saved to: {METRICS_PATH}")
-
-
-# ============================================================
-# Visualization
-# ============================================================
-
-figure = plt.figure(figsize=(12, 4))
-
-plt.subplot(1, 3, 1)
-plt.imshow(x.permute(1, 2, 0).numpy())
-plt.title("Input texture")
-plt.axis("off")
-
-plt.subplot(1, 3, 2)
-plt.imshow(y_true.numpy(), cmap="jet")
-plt.title("True height")
-plt.axis("off")
-
-plt.subplot(1, 3, 3)
-plt.imshow(y_pred.numpy(), cmap="jet")
-plt.title("Predicted height")
-plt.axis("off")
-
-plt.tight_layout()
-
-figure.savefig(
-    PREDICTION_PATH,
-    dpi=300,
-    bbox_inches="tight",
-)
-
-print(f"Prediction saved to: {PREDICTION_PATH}")
-
-plt.show()
+if __name__ == "__main__":
+    main()
