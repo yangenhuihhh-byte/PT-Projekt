@@ -1,0 +1,4 @@
+patch_size,stride,train_patches,val_patches,test_patches
+64,64,122880,24576,30720
+128,128,30720,6144,7680
+256,256,7680,1536,1920
